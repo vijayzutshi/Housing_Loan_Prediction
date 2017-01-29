@@ -1,0 +1,272 @@
+---
+title: "Untitled"
+output: pdf_document
+---
+
+## Housing Loan Prediction ##
+
+Dream Housing Finance company deals in all home loans. Customer first apply for home loan after that company validates the customer eligibility for loan. 
+
+Company wants to automate the loan eligibility process (real time) based on customer detail provided while filling online application form. These details are Gender, Marital Status, Education, Number of Dependents, Income, Loan Amount, Credit History and others. The prediction analysis identify the customers segments, those are eligible for loan amount. This will help the company to target these customers for home loans.
+
+## Library Used ##
+
+```{r echo = FALSE}
+library(rpart)
+library(rpart.plot)
+library(e1071)
+library(rattle)
+library(randomForest)
+library(caret)
+library(kernlab)
+library(Hmisc)
+library(xgboost)
+library(h2o)
+library(MASS)
+library(dtplyr)
+```
+
+# Load Data ##
+ 
+```{r echo = FALSE}
+setwd("c:/Program Files/RStudio/loanprediction")
+TestData <- read.csv("test.csv", header = TRUE,  na.strings = c("", " ", NA))
+TrainData <- read.csv("train.csv", header = TRUE, na.strings = c("", " ", NA))
+Submission <- read.csv("Sample_Submission.csv", header = TRUE)
+```
+
+## Initial Investigation ##
+
+The initial investigation into the TrainData set involves plotting of histogram and boxplots for 
+- Applicant Income
+- Coapplicant Income
+_ Loan Amount
+- Loan Amount Term
+
+```{r echo = FALSE}
+TrainData <- data.frame(TrainData)
+TestData <- data.frame(TestData)
+Submission <- data.frame(Submission)
+summary(TrainData)
+summary(TestData)
+hist(TrainData$ApplicantIncome)
+boxplot(TrainData$ApplicantIncome, horizontal = T)
+hist(TrainData$CoapplicantIncome)
+boxplot(TrainData$CoapplicantIncome, horizontal = T)
+hist(TrainData$LoanAmount)
+boxplot(TrainData$LoanAmount, horizontal = T)
+hist(TrainData$Loan_Amount_Term)
+boxplot(TrainData$Loan_Amount_Term, horizontal = T)
+```
+
+The first peek at the datasets provides following details:-
+
+1. TrainData has 614 records with 13 variables. 
+
+2. TestData ahs 367 records with 13 variable.
+
+3. The histogram and boxplot of ApplicantIncome shows their are outliers as there is a huge difference between the mean and the median.
+
+4. The histogram and boxplot for CoapplicantIncome also shows that their are outliers because of the difference in mean and median.
+
+5. The histogram and boxplot for LoanAmount also shows that their are outliers as the mean and median are different.
+
+4. Similarly histogram and boxplot for Loan_Amount_Term also shows that their are outliers as the mean and median are different.
+
+## Transformation of TrainData Dataset ##
+
+```{r echo=FALSE}
+# rename levels of Dependents 
+levels(TrainData$Dependents)[4] <- "3"
+# change integer to numeric in Train dataset
+TrainData$ApplicantIncome <- as.numeric(TrainData$ApplicantIncome)
+TrainData$CoapplicantIncome <- as.numeric(TrainData$CoapplicantIncome)
+TrainData$LoanAmount <- as.numeric(TrainData$LoanAmount)
+TrainData$Loan_Amount_Term <- as.numeric(TrainData$Loan_Amount_Term)
+TrainData$Credit_History <- as.factor(TrainData$Credit_History)
+```
+
+## Transform the TestData dataset ##
+
+```{r echo = FALSE}
+levels(TestData$Dependents)[4] <- "3"
+TestData$ApplicantIncome <- as.numeric(TestData$ApplicantIncome)
+TestData$CoapplicantIncome <- as.numeric(TestData$CoapplicantIncome)
+TestData$LoanAmount <- as.numeric(TestData$LoanAmount)
+TestData$Loan_Amount_Term <- as.numeric(TestData$Loan_Amount_Term)
+TestData$Credit_History <- as.factor(TestData$Credit_History)
+TestData$Loan_Status <- factor(0,1)
+levels(TestData$Loan_Status)[1] <- "N"
+levels(TestData$Loan_Status)[2] <- "Y"
+```
+
+## Cleaning and Exploratory Data Analysis ##
+```{r echo = FALSE}
+a <- TrainData
+b.Test <- TestData
+# Replacing outliers in ApplicantIncome with their quantiles
+qnt <- quantile(a$ApplicantIncome, probs = c(.25, .75), na.rm = T)
+caps <- quantile(a$ApplicantIncome, probs=c(.05, .95), na.rm = T)
+H <- 1.5 * IQR(a$ApplicantIncome, na.rm = T)
+a$ApplicantIncome[a$ApplicantIncome < (qnt[1] - H)] <- caps[1]
+a$ApplicantIncome[a$ApplicantIncome > (qnt[2] + H)] <- caps[2]
+# Replacing outliers in CoapplicantIncome with their quantiles
+qnt1 <- quantile(a$CoapplicantIncome, probs = c(.25, .75), na.rm = T)
+caps1 <- quantile(a$CoapplicantIncome, probs=c(.05, .95), na.rm = T)
+H1 <- 1.5 * IQR(a$CoapplicantIncome, na.rm = T)
+a$CoapplicantIncome[a$CoapplicantIncome < (qnt1[1] - H1)] <- caps1[1]
+a$CoapplicantIncome[a$CoapplicantIncome > (qnt1[2] + H1)] <- caps1[2]
+# Replacing outliers in LoanAmount with their quartiles
+qnt2 <- quantile(a$LoanAmount, probs = c(.25, .75), na.rm = T)
+caps2 <- quantile(a$LoanAmount, probs=c(.05, .95), na.rm = T)
+H2 <- 1.5 * IQR(a$LoanAmount, na.rm = T)
+a$LoanAmount[a$LoanAmount < (qnt2[1] - H2)] <- caps2[1]
+a$LoanAmount[a$LoanAmount > (qnt2[2] + H2)] <- caps2[2]
+# Replacing outliers in Loan_Amount_Term with their quartiles
+qnt3 <- quantile(a$Loan_Amount_Term, probs = c(.25, .75), na.rm = T)
+caps3 <- quantile(a$Loan_Amount_Term, probs=c(.05, .95), na.rm = T)
+H3 <- 1.5 * IQR(a$Loan_Amount_Term, na.rm = T)
+a$Loan_Amount_Term[a$Loan_Amount_Term < (qnt3[1] - H3)] <- caps3[1]
+a$Loan_Amount_Term[a$Loan_Amount_Term > (qnt3[2] + H3)] <- caps3[2]
+
+# do not use this
+#a$Loan_Status <- as.character(a$Loan_Status)
+#a$Credit_History <- as.numeric(as.character(a$Credit_History))
+#b.Test$Credit_History <- as.numeric(b.Test$Credit_History)
+#a$LoanAmount <- with(a, impute(LoanAmount, 'random'))
+#a$Credit_History <- with(a, impute(Credit_History, 'random'))
+#b.Test$Credit_History <- with(b.Test, impute(Credit_History, 'random'))
+# till here
+#a$Loan_Amount_Term <- with(a, impute(Loan_Amount_Term, 'random'))
+#a$Gender <- with(a, impute(Gender, 'random'))
+#a$Married <- with(a, impute(Married, 'random'))
+#a$Dependents <- with(a, impute(Dependents, 'random'))
+#a$Self_Employed <- with(a, impute(Self_Employed, 'random'))
+qnt <- quantile(b.Test$ApplicantIncome, probs = c(.25, .75), na.rm = T)
+caps <- quantile(b.Test$ApplicantIncome, probs=c(.05, .95), na.rm = T)
+H <- 1.5 * IQR(b.Test$ApplicantIncome, na.rm = T)
+b.Test$ApplicantIncome[b.Test$ApplicantIncome < (qnt[1] - H)] <- caps[1]
+b.Test$ApplicantIncome[b.Test$ApplicantIncome > (qnt[2] + H)] <- caps[2]
+# Replacing outliers in CoapplicantIncome with their quantiles
+qnt1 <- quantile(b.Test$CoapplicantIncome, probs = c(.25, .75), na.rm = T)
+caps1 <- quantile(b.Test$CoapplicantIncome, probs=c(.05, .95), na.rm = T)
+H1 <- 1.5 * IQR(b.Test$CoapplicantIncome, na.rm = T)
+b.Test$CoapplicantIncome[b.Test$CoapplicantIncome < (qnt1[1] - H1)] <- caps1[1]
+b.Test$CoapplicantIncome[b.Test$CoapplicantIncome > (qnt1[2] + H1)] <- caps1[2]
+# Replacing outliers in LoanAmount with their quartiles
+qnt2 <- quantile(b.Test$LoanAmount, probs = c(.25, .75), na.rm = T)
+caps2 <- quantile(b.Test$LoanAmount, probs=c(.05, .95), na.rm = T)
+H2 <- 1.5 * IQR(b.Test$LoanAmount, na.rm = T)
+b.Test$LoanAmount[b.Test$LoanAmount < (qnt2[1] - H2)] <- caps2[1]
+b.Test$LoanAmount[b.Test$LoanAmount > (qnt2[2] + H2)] <- caps2[2]
+# Replacing outliers in Loan_Amount_Term with their quartiles
+qnt3 <- quantile(b.Test$Loan_Amount_Term, probs = c(.25, .75), na.rm = T)
+caps3 <- quantile(b.Test$Loan_Amount_Term, probs=c(.05, .95), na.rm = T)
+H3 <- 1.5 * IQR(b.Test$Loan_Amount_Term, na.rm = T)
+b.Test$Loan_Amount_Term[b.Test$Loan_Amount_Term < (qnt3[1] - H3)] <- caps3[1]
+b.Test$Loan_Amount_Term[b.Test$Loan_Amount_Term > (qnt3[2] + H3)] <- caps3[2]
+```
+
+## Impute NAs in TestData ##
+```{r echo = FALSE}
+b.Test$Loan_Amount_Term <- with(b.Test, impute(Loan_Amount_Term, 'random'))
+b.Test$Gender <- with(b.Test, impute(Gender, 'random'))
+b.Test$LoanAmount <- with(b.Test, impute(LoanAmount, 'random'))
+b.Test$Dependents <- with(b.Test, impute(Dependents, 'random'))
+b.Test$Self_Employed <- with(b.Test, impute(Self_Employed, 'random'))
+b.Test$Credit_History <- with(b.Test, impute(Credit_History, 'random'))
+```
+
+## Build Models uing Machine Learning ## 
+```{r echo = FALSE}
+set.seed(1234)
+# 1. Classification and Regression Trees (CART)
+rpart.loan <- rpart(Loan_Status~ApplicantIncome+CoapplicantIncome+LoanAmount+Credit_History, a)
+fancyRpartPlot(rpart.loan)
+prediction <- predict(rpart.loan, b.Test, type = "class")
+confusion.matrix <- prop.table(table(prediction, b.Test$Loan_Status))
+summary(prediction)
+#Submission <- data.frame(Loan_ID = b.Test$Loan_ID, Loan_Status = prediction)
+
+control <- trainControl(method = "cv", number = 10)
+metric <- "Accuracy"
+
+# 2. Linear Discriminant Analysis (LDA)
+fit.lda <- train(Loan_Status~ApplicantIncome+CoapplicantIncome+LoanAmount+Credit_History, 
+                 data = a, method = "lda", metric = metric, trControl = control)
+fit.lda
+
+# 3. Quadtractic Discriminant Analysis (QDA)
+fit.qda <- train(Loan_Status~ApplicantIncome+CoapplicantIncome+LoanAmount+Credit_History, 
+                 data = a, method = "qda", metric = metric, trControl = control)
+fit.qda
+
+fit.cart <- train(Loan_Status~ApplicantIncome+CoapplicantIncome+LoanAmount+Credit_History,
+               data = a, method = "rpart", metric = metric, trControl = control)
+fit.cart
+
+# 4. K-Nearest Neoghbours (KNN)
+fit.knn <- train(Loan_Status~ApplicantIncome+CoapplicantIncome+LoanAmount+Credit_History,
+                 data = a, method = "knn", metric = metric, trControl = control)
+fit.knn
+
+# 5. Support Vector Machines (SVM)
+fit.svm <- train(Loan_Status~ApplicantIncome+CoapplicantIncome+LoanAmount+Credit_History,
+                 data = a, method = "svmRadial", metric = metric, trControl = control)
+fit.svm
+
+# 6. Random Forest (RF)
+fit.rf <- train(Loan_Status~ApplicantIncome+CoapplicantIncome+LoanAmount+Credit_History,
+                 data = a, method = "rf", metric = metric, trControl = control)
+fit.rf
+
+# 7. Using GBM in h2o for prediction
+b.H2o <- TrainData
+training <- b.H2o[, -1]
+submission <- TestData[, 1]
+testing <- TestData[, -1]
+features <- colnames(training)[-12]
+label <- "Loan_Status"
+localH2O <-h2o.init(nthreads = -1)
+h2o.init
+training.h2o <- as.h2o(training)
+testing.h2o <- as.h2o(testing)
+colnames(training.h2o)
+system.time(gbm.model <- h2o.gbm(features, label, training_frame = training.h2o, 
+                     ntrees = 1000, max_depth = 4, learn_rate = 0.01, seed = 1234))
+h2o.performance(gbm.model)
+predict.gbm <- as.data.frame(h2o.predict(gbm.model, testing.h2o))
+
+h2o.auc(h2o.performance(gbm.model))
+
+# AUC is over 97% so the model is highly predictive
+#submit <- data.frame(Loan_ID = TestData$Loan_ID, Loan_Status = predict.gbm$predict)
+#write.csv(submit, "Sample_Submission.csv",row.names = F)
+
+```
+
+## Select Best Model ##
+
+We now have 6 models and accuracy estimates for each. Now we will resample all models and plot the accuracy of models. The plot shows that SVM is the most accurate model.
+```{r echo = FALSE}
+results <- resamples(list(lda=fit.lda, knn=fit.knn, svm=fit.svm, rf = fit.rf, qda = fit.qda,
+                          cart = fit.cart))
+summary(results)
+dotplot(results)
+# Final prediction of Loan_Status usinf Random Forest
+#prediction.svm <- as.data.frame(predict(fit.svm, b.Test))
+prediction.rf <- as.data.frame(predict(fit.rf, b.Test))
+# create submission file
+submit <- data.frame(Loan_ID = b.Test$Loan_ID, Loan_Status = prediction.rf)
+write.csv(submit, "Sample_Submission.csv",row.names = F)
+```
+
+## Conclusion ##
+
+1. Based on various prediction models used Random Forest tops the list with an accuracy of 82%. The dotplot of various models based on accuarcy also confirms that RF tops the list.
+
+2. The visualization of data using decission tree provides following valuable insights which can help the housing finance company in automation of loan eligibility process:
+
+  * The top node shows that the basic eligibility criterion for loan eligibility should be          customers credit history. It also displays that 31% have a credit history while 69% do not      have credit history.
+  * Those customers who have credit history of '0', 92% of them will not go for the loan. While     only 8% will go ahead with the loan. 
+  * Those customers who do not have a credit history of '0', 21% will go for the loan while 79%     will not go for the loan.
